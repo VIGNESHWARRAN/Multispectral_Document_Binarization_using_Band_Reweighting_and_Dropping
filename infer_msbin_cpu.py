@@ -30,8 +30,12 @@ def main():
     image_dir = msbin_root / args.split / "images"
     pages, all_keys = group_books(image_dir)
 
-    wanted = [k.strip() for k in Path(args.keys_txt).read_text().splitlines() if k.strip()]
-    wanted = [k for k in wanted if k in pages]
+    if args.keys_txt is None:
+        wanted = all_keys   # run on all pages in this split
+    else:
+        wanted = [k.strip() for k in Path(args.keys_txt).read_text().splitlines() if k.strip()]
+        wanted = [k for k in wanted if k in pages]
+
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
