@@ -13,7 +13,7 @@ def get_args():
     p = argparse.ArgumentParser()
     p.add_argument("--msbin_root", type=str, required=True)
     p.add_argument("--split", type=str, default="train")  # val lives inside train/
-    p.add_argument("--keys_txt", type=str, required=True)
+    p.add_argument("--keys_txt", type=str, required=None)
     p.add_argument("--ckpt", type=str, required=True)
     p.add_argument("--outdir", type=str, required=True)
     p.add_argument("--white_only", action="store_true")
