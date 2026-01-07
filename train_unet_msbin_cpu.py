@@ -75,7 +75,7 @@ def get_args():
 
 def main():
     args = get_args()
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     
 
     # seeds (helps reproducibility; resume restores RNG too)

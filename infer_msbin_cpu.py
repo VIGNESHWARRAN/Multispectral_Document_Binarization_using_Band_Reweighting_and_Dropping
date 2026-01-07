@@ -23,7 +23,7 @@ def get_args():
 @torch.no_grad()
 def main():
     args = get_args()
-    device = "cpu"  # force CPU-only
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     msbin_root = Path(args.msbin_root)
     image_dir = msbin_root / args.split / "images"
