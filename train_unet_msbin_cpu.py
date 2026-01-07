@@ -33,7 +33,7 @@ def save_ckpt(path, model, opt, epoch, best_score, extra=None):
     torch.save(ckpt, path)
 
 def load_ckpt(path, model, opt):
-    ckpt = torch.load(path, map_location="cpu")
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model"])
     opt.load_state_dict(ckpt["optimizer"])
     if "torch_rng" in ckpt: torch.set_rng_state(ckpt["torch_rng"])
@@ -127,7 +127,8 @@ def main():
     bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
+
 
     start_epoch = 1
     best_score = -1e18  # higher is better; we’ll use -train_loss as score for now
@@ -148,7 +149,8 @@ def main():
 
             opt.zero_grad(set_to_none=True)
 
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", enabled=(device == "cuda")):
+
                 logits = model(x)
                 loss = args.bce_w * bce(logits, y) + args.dice_w * dice_loss_with_logits(logits, y)
 
