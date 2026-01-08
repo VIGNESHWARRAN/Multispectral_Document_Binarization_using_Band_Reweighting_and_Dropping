@@ -1,0 +1,21 @@
+from pathlib import Path
+import re
+
+msbin_root = Path('/content/drive/MyDrive/datasets/MSBin/MSBin_v2/data')
+files = sorted((msbin_root / 'test/images').glob('*.png'))
+books = {}
+for p in files: 
+    m = re.match(r'^(.+)_([0-9]+)$', p.stem)
+    if m: 
+        key = m.group(1)
+        wl = int(m.group(2))
+        books.setdefault(key, set()).add(wl)
+
+keys = sorted([k for k,v in books.items() if all(i in v for i in range(12))])
+outdir = Path('/content/drive/MyDrive/runs_colab/splits')
+outdir.mkdir(exist_ok=True, parents=True)
+outpath = outdir / 'test_keys.txt'
+outpath.write_text('\n'.join(keys) + '\n')
+
+print(f'Created {outpath} with {len(keys)} test pages')
+print('First 5 keys:', keys[:5])
