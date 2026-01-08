@@ -1,4 +1,3 @@
-# train_unet.py
 import argparse
 from pathlib import Path
 import random
@@ -12,16 +11,41 @@ import csv
 from msbin_dataset import MSBinDibcoPatchDataset
 from unet_small import UNetSmall
 
+
 def dice_loss_with_logits(logits, targets, eps=1e-6):
     probs = torch.sigmoid(logits)
     num = 2.0 * (probs * targets).sum(dim=(2, 3))
     den = (probs + targets).sum(dim=(2, 3)) + eps
     return (1.0 - (num / den)).mean()
 
-def save_ckpt(path, model, opt, epoch, best_score, extra=None):
+
+@torch.no_grad()
+def eval_pixel_f1(model, loader, device, thr=0.5, eps=1e-8):
+    model.eval()
+    tp = fp = fn = 0.0
+
+    for x, y in loader:
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+
+        logits = model(x)
+        probs = torch.sigmoid(logits)
+        pred = (probs > thr).to(y.dtype)
+
+        tp += (pred * y).sum().item()
+        fp += (pred * (1 - y)).sum().item()
+        fn += ((1 - pred) * y).sum().item()
+
+    precision = tp / (tp + fp + eps)
+    recall = tp / (tp + fn + eps)
+    f1 = (2 * precision * recall) / (precision + recall + eps)
+    return f1, precision, recall
+
+
+def save_ckpt(path, model, opt, epoch, best_val_f1, extra=None):
     ckpt = {
         "epoch": epoch,
-        "best_score": best_score,
+        "best_val_f1": best_val_f1,
         "model": model.state_dict(),
         "optimizer": opt.state_dict(),
         "torch_rng": torch.get_rng_state(),
@@ -32,16 +56,21 @@ def save_ckpt(path, model, opt, epoch, best_score, extra=None):
         ckpt.update(extra)
     torch.save(ckpt, path)
 
+
 def load_ckpt(path, model, opt):
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model"])
     opt.load_state_dict(ckpt["optimizer"])
-    if "torch_rng" in ckpt: torch.set_rng_state(ckpt["torch_rng"])
-    if "py_rng" in ckpt: random.setstate(ckpt["py_rng"])
-    if "np_rng" in ckpt: np.random.set_state(ckpt["np_rng"])
+    if "torch_rng" in ckpt:
+        torch.set_rng_state(ckpt["torch_rng"])
+    if "py_rng" in ckpt:
+        random.setstate(ckpt["py_rng"])
+    if "np_rng" in ckpt:
+        np.random.set_state(ckpt["np_rng"])
     start_epoch = ckpt.get("epoch", 1)
-    best_score = ckpt.get("best_score", -1e18)
-    return start_epoch, best_score
+    best_val_f1 = ckpt.get("best_val_f1", -1e18)
+    return start_epoch, best_val_f1
+
 
 def log_band_weights_csv(out_csv: Path, epoch: int, weights_1d: np.ndarray):
     header = ["epoch"] + [f"band_{i}" for i in range(len(weights_1d))]
@@ -53,6 +82,7 @@ def log_band_weights_csv(out_csv: Path, epoch: int, weights_1d: np.ndarray):
             w.writerow(header)
         w.writerow(row)
 
+
 def get_args():
     p = argparse.ArgumentParser()
     p.add_argument("--msbin_root", type=str, required=True)
@@ -63,9 +93,9 @@ def get_args():
     p.add_argument("--min_fg_frac", type=float, default=0.002)
     p.add_argument("--max_patches_per_page", type=int, default=None)
 
-    p.add_argument("--epochs", type=int, default=8)
-    p.add_argument("--batch", type=int, default=2)
-    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--batch", type=int, default=4)
+    p.add_argument("--lr", type=float, default=3e-4)
 
     p.add_argument("--white_only", action="store_true")
     p.add_argument("--outdir", type=str, default="runs_cpu/unet")
@@ -76,12 +106,18 @@ def get_args():
     p.add_argument("--band_reweight", action="store_true")
     p.add_argument("--band_drop_p", type=float, default=0.0)
 
-    p.add_argument("--pos_weight", type=float, default=15.0)  # important
-    p.add_argument("--bce_w", type=float, default=0.7)
-    p.add_argument("--dice_w", type=float, default=0.3)
+    p.add_argument("--pos_weight", type=float, default=6.0)
+    p.add_argument("--bce_w", type=float, default=0.9)
+    p.add_argument("--dice_w", type=float, default=0.1)
     p.add_argument("--grad_clip", type=float, default=1.0)
 
+    # NEW: key filtering + val
+    p.add_argument("--train_keys", type=str, default=None)
+    p.add_argument("--val_keys", type=str, default=None)
+    p.add_argument("--val_thr", type=float, default=0.5)
+
     return p.parse_args()
+
 
 def main():
     args = get_args()
@@ -106,6 +142,7 @@ def main():
         use_white_only=args.white_only,
         min_fg_frac=args.min_fg_frac,
         max_patches_per_page=args.max_patches_per_page,
+        keys_txt=args.train_keys,
     )
     train_loader = DataLoader(
         train_ds,
@@ -114,6 +151,27 @@ def main():
         num_workers=args.num_workers,
         pin_memory=(device == "cuda"),
     )
+
+    val_loader = None
+    if args.val_keys is not None:
+        val_ds = MSBinDibcoPatchDataset(
+            msbin_root=args.msbin_root,
+            split="train",
+            fg_type=args.fg_type,
+            patch_size=args.patch,
+            stride=args.stride,
+            use_white_only=args.white_only,
+            min_fg_frac=0.0,  # evaluate everything in the val pages
+            max_patches_per_page=None,
+            keys_txt=args.val_keys,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=args.batch,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=(device == "cuda"),
+        )
 
     in_ch = 1 if args.white_only else 12
     model = UNetSmall(
@@ -129,13 +187,12 @@ def main():
 
     scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
 
-
     start_epoch = 1
-    best_score = -1e18  # higher is better; we’ll use -train_loss as score for now
+    best_val_f1 = -1e18
 
     if args.resume and last_path.exists():
-        start_epoch, best_score = load_ckpt(last_path, model, opt)
-        print(f"Resuming from {last_path} at epoch {start_epoch}, best_score={best_score:.4f}")
+        start_epoch, best_val_f1 = load_ckpt(last_path, model, opt)
+        print(f"Resuming from {last_path} at epoch {start_epoch}, best_val_f1={best_val_f1:.4f}")
     else:
         print("Starting fresh training.")
 
@@ -150,7 +207,6 @@ def main():
             opt.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=(device == "cuda")):
-
                 logits = model(x)
                 loss = args.bce_w * bce(logits, y) + args.dice_w * dice_loss_with_logits(logits, y)
 
@@ -163,20 +219,42 @@ def main():
 
             running += loss.item()
 
-        avg = running / max(1, len(train_loader))
-        score = -avg
+        train_loss = running / max(1, len(train_loader))
 
-        save_ckpt(last_path, model, opt, epoch + 1, best_score)
+        # --- Validation ---
+        if val_loader is not None:
+            val_f1, val_p, val_r = eval_pixel_f1(model, val_loader, device, thr=args.val_thr)
+        else:
+            val_f1, val_p, val_r = float("nan"), float("nan"), float("nan")
 
-        if score > best_score:
-            best_score = score
-            save_ckpt(best_path, model, opt, epoch + 1, best_score)
+        # Save last
+        save_ckpt(last_path, model, opt, epoch + 1, best_val_f1)
+
+        # Save best by val_f1 (if no val, fallback to train_loss)
+        improved = False
+        if val_loader is not None:
+            if val_f1 > best_val_f1:
+                best_val_f1 = val_f1
+                improved = True
+        else:
+            # fallback behavior (not recommended)
+            if -train_loss > best_val_f1:
+                best_val_f1 = -train_loss
+                improved = True
+
+        if improved:
+            save_ckpt(best_path, model, opt, epoch + 1, best_val_f1)
 
         if args.band_reweight and getattr(model, "last_band_weights", None) is not None:
             w_mean = model.last_band_weights.mean(dim=0).cpu().numpy()
             log_band_weights_csv(band_csv, epoch, w_mean)
 
-        print(f"Epoch {epoch}: train_loss={avg:.4f} best_score={best_score:.4f} saved={outdir}")
+        print(
+            f"Epoch {epoch}: train_loss={train_loss:.4f} "
+            f"val_f1@{args.val_thr:.2f}={val_f1:.4f} (P={val_p:.4f} R={val_r:.4f}) "
+            f"best_val_f1={best_val_f1:.4f} saved={outdir}"
+        )
+
 
 if __name__ == "__main__":
     main()

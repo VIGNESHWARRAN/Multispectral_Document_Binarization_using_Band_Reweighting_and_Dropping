@@ -1,4 +1,3 @@
-# msbin_dataset.py
 from pathlib import Path
 import re
 import numpy as np
@@ -20,7 +19,6 @@ def _read_png_bgr(path: Path) -> np.ndarray:
     return img
 
 def pad_to_size(img: np.ndarray, size: int) -> np.ndarray:
-    # supports 2D or 3D
     if img.ndim == 2:
         h, w = img.shape
         pad_h = max(0, size - h)
@@ -46,8 +44,8 @@ def group_books(image_dir: Path):
         m = re.match(r"^(.+)_([0-9]+)$", p.stem)
         if not m:
             continue
-        key = m.group(1)
-        wl = int(m.group(2))
+        key = m.group(1)       # BookId_PageId
+        wl = int(m.group(2))   # 0..11
         books.setdefault(key, {})[wl] = p
 
     keys = [k for k, d in books.items() if all(i in d for i in range(12))]
@@ -55,16 +53,11 @@ def group_books(image_dir: Path):
     return books, keys
 
 
-class MSBinPatchDataset(Dataset):
+class MSBinDibcoPatchDataset(Dataset):
     """
-    Train directly on MSBIN official color-coded labels (data/<split>/labels/<key>.png).
-
-    Paper definition (Table II):
-      FG1 = (255,255,255)
-      FG2 = (122,122,122)
-      BG  = (0,0,0)
-      UR  = (0,0,255)  (RGB) -> BGR=(255,0,0) in OpenCV
-    UR is excluded from evaluation; treat as background (0) in y_mask. [file:594]
+    MSBIN patch dataset using OFFICIAL color-coded labels/ (not dibco_labels).
+    UR is treated as background, matching evaluation definition. [file:594]
+    Supports filtering by page keys via keys_txt.
     """
     def __init__(
         self,
@@ -76,6 +69,7 @@ class MSBinPatchDataset(Dataset):
         use_white_only=False,
         min_fg_frac=0.002,
         max_patches_per_page=None,
+        keys_txt: str | None = None,
     ):
         self.root = Path(msbin_root)
         self.split = split
@@ -87,9 +81,15 @@ class MSBinPatchDataset(Dataset):
         self.max_patches_per_page = max_patches_per_page
 
         self.image_dir = self.root / split / "images"
-        self.label_dir = self.root / split / "labels"   # <-- IMPORTANT: official labels/
+        self.label_dir = self.root / split / "labels"   # <-- official labels/
 
-        self.books, self.keys = group_books(self.image_dir)
+        self.books, all_keys = group_books(self.image_dir)
+
+        if keys_txt is not None:
+            wanted = {k.strip() for k in Path(keys_txt).read_text().splitlines() if k.strip()}
+            self.keys = [k for k in all_keys if k in wanted]
+        else:
+            self.keys = all_keys
 
         self.index = []
         for key in self.keys:
@@ -120,30 +120,19 @@ class MSBinPatchDataset(Dataset):
                 f"Dataset empty. Check paths:\n"
                 f" images: {self.image_dir}\n"
                 f" labels: {self.label_dir}\n"
+                f" keys_txt: {keys_txt}\n"
                 f"Try lowering --min_fg_frac.\n"
             )
 
     def _gt_to_fgmask(self, gt_bgr: np.ndarray) -> np.ndarray:
-        # pad safety (in case patch at borders later)
         gt_bgr = pad_to_size(gt_bgr, self.patch_size)
 
-        # OpenCV loads BGR.
-        # FG1 (white): BGR (255,255,255)
-        is_fg1 = (gt_bgr[:, :, 0] == 255) & (gt_bgr[:, :, 1] == 255) & (gt_bgr[:, :, 2] == 255)
+        is_fg1 = (gt_bgr[:, :, 0] == 255) & (gt_bgr[:, :, 1] == 255) & (gt_bgr[:, :, 2] == 255)  # white
+        is_fg2 = (gt_bgr[:, :, 0] == 122) & (gt_bgr[:, :, 1] == 122) & (gt_bgr[:, :, 2] == 122)  # gray
+        is_ur  = (gt_bgr[:, :, 0] == 255) & (gt_bgr[:, :, 1] == 0)   & (gt_bgr[:, :, 2] == 0)    # BGR blue
 
-        # FG2 (gray 122): BGR (122,122,122)
-        is_fg2 = (gt_bgr[:, :, 0] == 122) & (gt_bgr[:, :, 1] == 122) & (gt_bgr[:, :, 2] == 122)
-
-        # UR (blue in RGB is 0,0,255) => in BGR it's (255,0,0)
-        is_ur = (gt_bgr[:, :, 0] == 255) & (gt_bgr[:, :, 1] == 0) & (gt_bgr[:, :, 2] == 0)
-
-        if self.fg_type == 1:
-            y = is_fg1.astype(np.float32)
-        else:
-            y = is_fg2.astype(np.float32)
-
-        # UR excluded: make it background
-        y[is_ur] = 0.0
+        y = is_fg1.astype(np.float32) if self.fg_type == 1 else is_fg2.astype(np.float32)
+        y[is_ur] = 0.0  # UR excluded -> background [file:594]
         return y
 
     def __len__(self):
@@ -163,11 +152,9 @@ class MSBinPatchDataset(Dataset):
 
         gt = _read_png_bgr(self.label_dir / f"{key}.png")
         gt_crop = gt[y0:y0+self.patch_size, x0:x0+self.patch_size]
-        y_mask = self._gt_to_fgmask(gt_crop)  # already correct polarity
+        y_mask = self._gt_to_fgmask(gt_crop)
 
         return torch.from_numpy(x_img), torch.from_numpy(y_mask).unsqueeze(0)
 
 
-# Backwards compatibility with your imports
-MSBinDibcoPatchDataset = MSBinPatchDataset
 group_pages = group_books
