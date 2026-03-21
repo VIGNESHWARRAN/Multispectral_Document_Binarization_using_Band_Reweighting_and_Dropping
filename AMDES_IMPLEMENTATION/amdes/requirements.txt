@@ -1,0 +1,42 @@
+# AMDES — Python dependencies
+
+# Web framework & frontend
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+streamlit>=1.35.0
+python-multipart>=0.0.9
+
+# HTTP
+requests>=2.31.0
+httpx>=0.27.0
+
+# Image processing
+Pillow>=10.3.0
+numpy>=1.26.0
+scipy>=1.13.0
+
+# Wavelet processing (for future spectral pipeline)
+PyWavelets>=1.6.0
+
+# Optional: local model support (uncomment when using your own model)
+# tensorflow>=2.16.0     # for .h5 Keras models
+# onnxruntime>=1.18.0    # for .onnx models (lighter alternative)
+
+# Optional: OCR
+# pytesseract>=0.3.13    # requires Tesseract 5 installed on OS
+
+# Optional: advanced spectral processing
+# spectral>=0.23.1       # SPy — hyperspectral processing
+# rasterio>=1.3.10       # GeoTIFF / multispectral I/O
+
+# Utilities
+python-dotenv>=1.0.1
+
+scikit-image>=0.22.0
+pytesseract>=0.3.13
+opencv-python>=4.9.0
+PyWavelets>=1.6.0
+
+PyWavelets>=1.6.0
+scikit-image>=0.22.0
+scipy>=1.13.0

@@ -1,2 +1,7 @@
 .venv
 amdes_ui/.streamlit
+*/*/.env.example
+*/*/.env
+*/*/.venv
+*/*/.streamlit
+*/*/README.md
