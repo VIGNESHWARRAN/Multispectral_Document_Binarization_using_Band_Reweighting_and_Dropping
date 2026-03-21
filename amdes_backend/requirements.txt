@@ -1,0 +1,10 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+pillow==10.3.0
+numpy==1.26.4
+requests==2.31.0
+
+# Uncomment when your model is ready:
+# tensorflow==2.16.1   # for .h5 Keras model
+# torch==2.3.0         # for .pt PyTorch model
