@@ -49,9 +49,15 @@ class FolderMeasure:
         self.save_single_results = save_single_results
 
         # Assure that the binary file is existing:
-        if (not os.path.exists(self.path_dibco_bin)):
-            print('The DIBCO binary path is wrong. This path must contain a file named: DIBCO_metrics.exe')
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), self.path_dibco_bin)
+        # Only check when DIBCO tool is requested
+        if self.use_dibco_tool:
+            if not os.path.exists(self.path_dibco_bin):
+                print('The DIBCO binary path is wrong. This path must contain a file named: DIBCO_metrics.exe')
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    os.strerror(errno.ENOENT),
+                    self.path_dibco_bin
+                )
             
         self.mean_fm = -1
         self.mean_precision = -1
