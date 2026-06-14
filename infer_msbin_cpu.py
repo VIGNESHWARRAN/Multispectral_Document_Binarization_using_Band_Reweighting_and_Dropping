@@ -1,4 +1,4 @@
-# infer_keys.py
+# infer_msbin_cpu.py
 import argparse
 from pathlib import Path
 import numpy as np
