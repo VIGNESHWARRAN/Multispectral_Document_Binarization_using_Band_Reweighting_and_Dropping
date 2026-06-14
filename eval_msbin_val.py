@@ -23,7 +23,7 @@ def main():
 
     # 1) inference on val keys (full pages)
     cmd_infer = [
-        "python", "infer_keys.py",
+        "python", "infer_msbin_cpu.py",
         "--msbin_root", args.msbin_root,
         "--split", "train",
         "--keys_txt", args.val_keys,
